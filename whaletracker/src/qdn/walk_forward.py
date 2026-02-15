@@ -273,7 +273,9 @@ class PortfolioBacktester:
         prices: np.ndarray,
         primary_scores: np.ndarray,
         actual_returns: np.ndarray,
-        daily_volumes: Optional[np.ndarray] = None
+        daily_volumes: Optional[np.ndarray] = None,
+        filing_dates: Optional[np.ndarray] = None,
+        whale_types: Optional[np.ndarray] = None
     ) -> Dict:
         """
         Simulate trading over time.
@@ -294,7 +296,8 @@ class PortfolioBacktester:
             day_prices = prices[day_mask]
             day_returns = actual_returns[day_mask]
             day_vols = daily_volumes[day_mask] if daily_volumes is not None else np.ones(len(day_features)) * 1e6
-            
+            day_filing_dates = filing_dates[day_mask] if filing_dates is not None else [None] * len(day_features)
+            day_whale_types = whale_types[day_mask] if whale_types is not None else ["unknown"] * len(day_features)
             # 1. Filter signals (primary score threshold)
             thresh = self.config.backtest.buy_score_threshold
             valid = (day_scores >= thresh)
@@ -317,7 +320,9 @@ class PortfolioBacktester:
                     "confidence": conf,
                     "price": day_prices[i],
                     "return": day_returns[i],
-                    "vol": day_vols[i]
+                    "vol": day_vols[i],
+                    "filing_date": day_filing_dates[i],
+                    "whale_type": day_whale_types[i]
                 })
 
             if not signals:
@@ -350,8 +355,10 @@ class PortfolioBacktester:
                     current_equity += pnl
                     
                     self.trade_log.append({
-                        "date": dt,
+                        "execution_date": dt,
+                        "filing_date": sig["filing_date"],
                         "ticker": ticker,
+                        "whale_type": sig["whale_type"],
                         "shares": fill["shares"],
                         "entry": fill["price"],
                         "pnl": pnl,
@@ -372,10 +379,44 @@ class PortfolioBacktester:
 
     def report(self) -> str:
         """Generate summary report."""
+        if not self.equity_curve:
+            return "No trades executed."
+            
+        final_equity = self.equity_curve[-1]['equity']
+        total_return = (final_equity / self.pm.cash) - 1
+        
         lines = ["Portfolio Simulation Report", "=" * 40]
-        lines.append(f"Final Equity: ${self.equity_curve[-1]['equity']:,.2f}")
+        lines.append(f"Final Equity: ${final_equity:,.2f} ({total_return:+.2%})")
         lines.append(f"Total Trades: {len(self.trade_log)}")
+        
+        # Periodic Summary
+        lines.append("\nPeriodic P&L Summary:")
+        periodic = self.get_periodic_report(freq="M")
+        lines.append(periodic.to_string())
+        
         return "\n".join(lines)
+
+    def get_periodic_report(self, freq: str = "M") -> pd.DataFrame:
+        """
+        Generate periodic P&L and Balance summary (Monthly/Quarterly).
+        """
+        if not self.equity_curve:
+            return pd.DataFrame()
+            
+        df_equity = pd.DataFrame(self.equity_curve)
+        df_equity['date'] = pd.to_datetime(df_equity['date'])
+        df_equity = df_equity.set_index('date')
+        
+        # Resample to end of period
+        resampled = df_equity['equity'].resample(freq).last().ffill()
+        
+        report = pd.DataFrame({
+            "Closing Balance": resampled,
+            "Period P&L": resampled.diff().fillna(resampled.iloc[0] - self.pm.cash),
+            "Return": resampled.pct_change().fillna((resampled.iloc[0] / self.pm.cash) - 1)
+        })
+        
+        return report
 
 
 class PurgedKFoldBacktester:

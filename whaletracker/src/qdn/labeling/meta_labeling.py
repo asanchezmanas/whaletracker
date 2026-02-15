@@ -48,6 +48,77 @@ class MetaModelManager:
         self.optimizer = optim.Adam(self.model.parameters(), lr=0.001)
         self.criterion = nn.BCELoss()
 
+    def train(
+        self, 
+        features: np.ndarray, 
+        scores: np.ndarray, 
+        labels: np.ndarray, 
+        sample_weights: Optional[np.ndarray] = None,
+        epochs: int = 50,
+        batch_size: int = 32
+    ):
+        """
+        Full multi-epoch training loop for the Meta-Labeler.
+        """
+        if sample_weights is None:
+            sample_weights = np.ones(len(labels))
+            
+        # Combine QDN features with primary scores
+        X = np.hstack([features, scores.reshape(-1, 1)])
+        y = labels.reshape(-1, 1)
+        w = sample_weights.reshape(-1, 1)
+        
+        # Train/Val Split (simple 80/20)
+        split = int(0.8 * len(X))
+        X_train, X_val = X[:split], X[split:]
+        y_train, y_val = y[:split], y[split:]
+        w_train, w_val = w[:split], w[split:]
+        
+        X_train_t = torch.FloatTensor(X_train)
+        y_train_t = torch.FloatTensor(y_train)
+        w_train_t = torch.FloatTensor(w_train)
+        
+        X_val_t = torch.FloatTensor(X_val)
+        y_val_t = torch.FloatTensor(y_val)
+        
+        best_val_loss = float('inf')
+        patience = 5
+        patience_counter = 0
+        
+        logger.info(f"Training Meta-Labeler on {len(X_train)} samples...")
+        
+        for epoch in range(epochs):
+            self.model.train()
+            self.optimizer.zero_grad()
+            
+            outputs = self.model(X_train_t)
+            loss = (self.criterion(outputs, y_train_t) * w_train_t).mean()
+            loss.backward()
+            self.optimizer.step()
+            
+            # Validation
+            self.model.eval()
+            with torch.no_grad():
+                val_outputs = self.model(X_val_t)
+                val_loss = self.criterion(val_outputs, y_val_t).item()
+                
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                patience_counter = 0
+                # Save best state internally
+                self._best_state = self.model.state_dict()
+            else:
+                patience_counter += 1
+                
+            if patience_counter >= patience:
+                logger.info(f"Early stopping at epoch {epoch}")
+                break
+                
+        if hasattr(self, '_best_state'):
+            self.model.load_state_dict(self._best_state)
+            
+        logger.info(f"Meta-Labeler training complete. Best Val Loss: {best_val_loss:.4f}")
+
     def train_step(self, features: np.ndarray, scores: np.ndarray, labels: np.ndarray, sample_weights: np.ndarray):
         """
         features: (N, 40)
