@@ -23,6 +23,10 @@ from .config import QDNConfig
 from .trainer import QDNTrainer
 from .evaluation import EvaluationResult, evaluate_predictions
 from .labeling.purged_kfold import PurgedKFoldCV, CombinatorialPurgedCV
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 
 @dataclass
@@ -243,21 +247,134 @@ class WalkForwardBacktester:
         }
 
 
+from .portfolio.manager import PortfolioManager
+from .backtest.simulator import ExecutionSimulator
+from .labeling.meta_labeling import MetaModelManager
+
+class PortfolioBacktester:
+    """
+    High-fidelity trading simulator.
+    Orchestrates signals, meta-labeling, sizing (HRP/Kelly), and execution.
+    """
+
+    def __init__(self, config: QDNConfig, initial_capital: float = 1000000):
+        self.config = config
+        self.pm = PortfolioManager(cash=initial_capital)
+        self.sim = ExecutionSimulator()
+        self.meta = MetaModelManager()
+        self.equity_curve = []
+        self.trade_log = []
+
+    def run(
+        self,
+        features: np.ndarray,
+        dates: np.ndarray,
+        tickers: List[str],
+        prices: np.ndarray,
+        primary_scores: np.ndarray,
+        actual_returns: np.ndarray,
+        daily_volumes: Optional[np.ndarray] = None
+    ) -> Dict:
+        """
+        Simulate trading over time.
+        """
+        logger.info(f"Starting Portfolio Simulation (Initial Capital: ${self.pm.cash:,.0f})")
+        
+        current_equity = self.pm.cash
+        self.equity_curve.append({"date": dates[0], "equity": current_equity})
+
+        # Group by date to simulate daily decisions
+        unique_dates = np.unique(dates)
+        
+        for dt in unique_dates:
+            day_mask = (dates == dt)
+            day_features = features[day_mask]
+            day_tickers = np.array(tickers)[day_mask]
+            day_scores = primary_scores[day_mask]
+            day_prices = prices[day_mask]
+            day_returns = actual_returns[day_mask]
+            day_vols = daily_volumes[day_mask] if daily_volumes is not None else np.ones(len(day_features)) * 1e6
+            
+            # 1. Filter signals (primary score threshold)
+            thresh = self.config.backtest.buy_score_threshold
+            valid = (day_scores >= thresh)
+            
+            if not np.any(valid):
+                self.equity_curve.append({"date": dt, "equity": current_equity})
+                continue
+
+            signals = []
+            for i in range(len(day_features)):
+                if not valid[i]: continue
+                
+                # 2. Meta-labeling filter (confidence)
+                conf = self.meta.predict_confidence(day_features[i], day_scores[i])
+                if conf < 0.5: continue # Skip low confidence
+                
+                signals.append({
+                    "ticker": day_tickers[i],
+                    "score": day_scores[i],
+                    "confidence": conf,
+                    "price": day_prices[i],
+                    "return": day_returns[i],
+                    "vol": day_vols[i]
+                })
+
+            if not signals:
+                self.equity_curve.append({"date": dt, "equity": current_equity})
+                continue
+                
+            # 3. Optimize Allocation (HRP/Kelly)
+            allocations = self.pm.optimize_allocation(signals)
+            
+            # 4. Execute with Simulator
+            for sig in signals:
+                ticker = sig["ticker"]
+                weight = allocations.get(ticker, 0.0)
+                if weight <= 0: continue
+                
+                requested_val = current_equity * weight
+                req_shares = int(requested_val / sig["price"])
+                
+                # Simulate fill
+                fill = self.sim.simulate_fill(
+                    ticker, req_shares, sig["price"], sig["vol"]
+                )
+                
+                if fill["shares"] > 0:
+                    realized_val = fill["shares"] * fill["price"]
+                    # Simplified PnL: entry * return - slippage
+                    # In a real bot, we'd track the open position until exit.
+                    # Here we assume barrier exit logic from labels.
+                    pnl = (fill["shares"] * fill["price"] * sig["return"]) - fill["slippage_cost"]
+                    current_equity += pnl
+                    
+                    self.trade_log.append({
+                        "date": dt,
+                        "ticker": ticker,
+                        "shares": fill["shares"],
+                        "entry": fill["price"],
+                        "pnl": pnl,
+                        "slippage_bps": fill["slippage_bps"]
+                    })
+            
+            self.equity_curve.append({"date": dt, "equity": current_equity})
+            
+        final_return = (current_equity / self.pm.cash) - 1
+        logger.info(f"Simulation Complete. Final Equity: ${current_equity:,.0f} ({final_return:.1%})")
+        
+        return {
+            "equity_curve": pd.DataFrame(self.equity_curve),
+            "trades": pd.DataFrame(self.trade_log),
+            "final_equity": current_equity,
+            "total_return": final_return
+        }
+
     def report(self) -> str:
-        """Generate summary report of all folds."""
-        lines = ["Walk-Forward Backtest Report", "=" * 40]
-
-        for fold in self.folds:
-            status = "[OK]" if fold.result else "[SKIP] skipped"
-            sortino = f"{fold.result.sortino:.2f}" if fold.result else "N/A"
-            win_rate = f"{fold.result.win_rate:.1%}" if fold.result else "N/A"
-
-            lines.append(
-                f"Fold {fold.fold_id+1}: "
-                f"{fold.train_start.date()} → {fold.test_end.date()} | "
-                f"Sortino: {sortino} | Win: {win_rate} | {status}"
-            )
-
+        """Generate summary report."""
+        lines = ["Portfolio Simulation Report", "=" * 40]
+        lines.append(f"Final Equity: ${self.equity_curve[-1]['equity']:,.2f}")
+        lines.append(f"Total Trades: {len(self.trade_log)}")
         return "\n".join(lines)
 
 
@@ -267,9 +384,6 @@ class PurgedKFoldBacktester:
     
     Implements López de Prado's Purged K-Fold and optionally 
     Combinatorial Purged CV (CPCV).
-    
-    This replaces/augments the WalkForwardBacktester with 
-    statistically sound cross-validation.
     """
 
     def __init__(self, config: QDNConfig, combinatorial: bool = False):
@@ -286,7 +400,6 @@ class PurgedKFoldBacktester:
                 n_folds=config.training.cv_folds,
                 embargo_pct=config.training.embargo_pct,
             )
-        self.results = []
 
     def run(
         self,
@@ -296,19 +409,6 @@ class PurgedKFoldBacktester:
         event_ends: np.ndarray,
         sample_weights: Optional[np.ndarray] = None,
     ) -> Dict:
-        """
-        Run Purged K-Fold backtest.
-        
-        Args:
-            features: [n_samples, n_features]
-            labels: [n_samples] actual returns
-            dates: [n_samples] transaction (start) dates
-            event_ends: [n_samples] barrier exit dates
-            sample_weights: [n_samples] uniqueness weights
-            
-        Returns:
-            Dict with results summary
-        """
         print(f"Running {'CPCV' if self.combinatorial else 'Purged K-Fold'} CV")
         print("=" * 60)
 
@@ -316,7 +416,6 @@ class PurgedKFoldBacktester:
         all_test_labels = []
         fold_summaries = []
 
-        # split expects sorted dates
         sort_idx = np.argsort(dates)
         features = features[sort_idx]
         labels = labels[sort_idx]
@@ -326,74 +425,39 @@ class PurgedKFoldBacktester:
             sample_weights = sample_weights[sort_idx]
 
         for fold in self.cv.split(dates, dates, event_ends):
-            print(
-                f"\nFold {fold.fold_id + 1}: "
-                f"Train: {fold.n_train} | Test: {fold.n_test} | "
-                f"Purged: {fold.n_purged}"
-            )
+            print(f"\nFold {fold.fold_id + 1}: Train: {fold.n_train} | Test: {fold.n_test}")
 
-            # Extract data for this fold
             train_features = features[fold.train_indices]
             train_labels = labels[fold.train_indices]
             test_features = features[fold.test_indices]
             test_labels = labels[fold.test_indices]
             
-            train_weights = (
-                sample_weights[fold.train_indices] 
-                if sample_weights is not None else None
-            )
-            test_weights = (
-                sample_weights[fold.test_indices] 
-                if sample_weights is not None else None
-            )
-
-            if len(train_features) < 100:
-                print("  [WARNING] Skipping: too few train samples")
-                continue
-
             # Train
             trainer = QDNTrainer(self.config)
             result = trainer.train(
                 train_features, train_labels,
                 test_features, test_labels,
-                train_weights=train_weights,
-                val_weights=test_weights,
+                train_weights=sample_weights[fold.train_indices] if sample_weights is not None else None,
             )
 
             if result:
                 fold_summaries.append(result)
-                
-                # Get test scores for OOS evaluation
                 trainer.model.eval()
                 import torch
                 with torch.no_grad():
-                    test_tensor = torch.tensor(
-                        test_features, dtype=torch.float32
-                    ).to(trainer.device)
+                    test_tensor = torch.tensor(test_features, dtype=torch.float32).to(trainer.device)
                     output = trainer.model(test_tensor)
                     scores = output["convexity_score"].squeeze(-1).cpu().numpy()
                 
                 all_test_scores.append(scores)
                 all_test_labels.append(test_labels)
-                
-                print(f"  Result: {result.summary()}")
 
-        # Aggregate Result
         if all_test_scores:
             agg_scores = np.concatenate(all_test_scores)
             agg_labels = np.concatenate(all_test_labels)
-            
-            aggregate_result = evaluate_predictions(
-                agg_scores,
-                agg_labels,
-                threshold=self.config.backtest.buy_score_threshold,
-            )
+            aggregate_result = evaluate_predictions(agg_scores, agg_labels, threshold=self.config.backtest.buy_score_threshold)
         else:
             aggregate_result = None
 
-        return {
-            "fold_results": fold_summaries,
-            "aggregate": aggregate_result,
-            "combinatorial": self.combinatorial,
-        }
+        return {"fold_results": fold_summaries, "aggregate": aggregate_result, "combinatorial": self.combinatorial}
 
