@@ -69,15 +69,7 @@ class SECConnector:
     ) -> pd.DataFrame:
         """
         Fetch recent Form 4 filings via EDGAR Full-Text Search.
-        
-        Args:
-            days_back: How many days of filings to retrieve
-            form_type: SEC form type (4 = insider transactions)
-        
-        Returns:
-            DataFrame with columns: ticker, insider_name, insider_title,
-            transaction_date, filing_date, transaction_code, shares,
-            price, value, ownership_after, source, cik
+        Best for recent data (< 1 year).
         """
         date_from = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
         date_to = datetime.now().strftime("%Y-%m-%d")
@@ -130,26 +122,72 @@ class SECConnector:
                 logger.error(f"EFTS search failed: {e}")
                 break
 
-        logger.info(f"Found {len(all_filings)} Form {form_type} filing URLs")
+        return self._process_filing_list(all_filings)
 
-        # Parse each filing XML
+    def fetch_historical_index(
+        self,
+        year: int,
+        quarter: int,
+        form_type: str = "4",
+    ) -> pd.DataFrame:
+        """
+        Fetch filings by parsing the SEC's master.idx for a specific quarter.
+        REQUIRED for 10-year backfill (EFTS is limited).
+        """
+        self._rate_limit()
+        url = f"https://www.sec.gov/Archives/edgar/full-index/{year}/QTR{quarter}/master.idx"
+        
+        logger.info(f"Fetching Master Index: {year} Q{quarter}")
+        try:
+            client = self._get_client()
+            r = client.get(url)
+            r.raise_for_status()
+            
+            # Index format: CIK|Name|Form|Date|File
+            lines = r.text.split('\n')
+            data_start = 0
+            for i, line in enumerate(lines):
+                if line.startswith('---'):
+                    data_start = i + 1
+                    break
+            
+            filing_list = []
+            for line in lines[data_start:]:
+                parts = line.split('|')
+                if len(parts) < 5: continue
+                
+                if parts[2] == form_type:
+                    filing_list.append({
+                        "cik": parts[0],
+                        "company_name": parts[1],
+                        "form_type": parts[2],
+                        "filing_date": parts[3],
+                        "filing_url": f"https://www.sec.gov/Archives/{parts[4]}"
+                    })
+            
+            logger.info(f"Found {len(filing_list)} {form_type} filings in {year} Q{quarter}")
+            return self._process_filing_list(filing_list)
+            
+        except Exception as e:
+            logger.error(f"Master index fetch failed for {year} Q{quarter}: {e}")
+            return pd.DataFrame()
+
+    def _process_filing_list(self, filing_list: List[Dict]) -> pd.DataFrame:
+        """Helper to parse a list of filing metadata into transactions."""
         transactions = []
-        for i, filing in enumerate(all_filings):
-            if i % 50 == 0 and i > 0:
-                logger.info(f"Parsing filing {i}/{len(all_filings)}")
-
+        for i, filing in enumerate(filing_list):
+            if i % 100 == 0 and i > 0:
+                logger.info(f"Parsing filing {i}/{len(filing_list)}")
+            
             parsed = self._parse_form4_xml(filing)
             if parsed:
                 transactions.extend(parsed)
-
+        
         if not transactions:
-            logger.warning("No transactions parsed from filings")
             return pd.DataFrame()
-
+            
         df = pd.DataFrame(transactions)
-        df = self._clean_data(df)
-        logger.info(f"Parsed {len(df)} insider transactions")
-        return df
+        return self._clean_data(df)
 
     def fetch_by_cik(
         self, cik: str, form_type: str = "4", max_filings: int = 40

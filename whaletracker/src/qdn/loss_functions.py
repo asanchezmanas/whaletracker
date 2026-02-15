@@ -221,8 +221,10 @@ class CalibrationLoss(nn.Module):
         
         returns_std = actual_returns.std() + 1e-8
         returns_mean = actual_returns.mean()
+        # Calibration for ANTIFRAGILE: 
+        # We only care about POSITIVE tail events (explosions)
         threshold = returns_mean + self.tail_threshold_sigma * returns_std
-        tail_label = (actual_returns.abs() > threshold.abs()).float()
+        tail_label = (actual_returns > threshold).float()
 
         # Total and Apply Weights
         if sample_weights is not None:

@@ -93,24 +93,24 @@ class GovContractConnector:
     def fetch_awards_by_recipient(
         self, 
         recipient_name: str, 
+        reference_date: Optional[str] = None,
         days_back: int = 365
     ) -> pd.DataFrame:
         """
         Fetch contract awards for a specific recipient name.
-        Note: Recipient names in USASpending are often UPPERCASE 
-        and may include inc, corp, etc.
+        Uses reference_date as the 'today' for historical context.
         """
         self._limiter.wait()
-        
         url = f"{USASPENDING_API}/search/spending_by_award/"
         
-        # Look for awards starting from X days ago
-        start_date = (datetime.now() - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        ref_dt = pd.to_datetime(reference_date) if reference_date else datetime.now()
+        start_date = (ref_dt - timedelta(days=days_back)).strftime("%Y-%m-%d")
+        end_date = ref_dt.strftime("%Y-%m-%d")
         
         payload = {
             "filters": {
                 "recipient_search_text": [recipient_name],
-                "time_period": [{"start_date": start_date, "end_date": datetime.now().strftime("%Y-%m-%d")}],
+                "time_period": [{"start_date": start_date, "end_date": end_date}],
                 "award_type_codes": ["A", "B", "C", "D"] # Basic contracts
             },
             "fields": [

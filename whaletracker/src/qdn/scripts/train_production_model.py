@@ -86,7 +86,7 @@ def run_production_training(days_back: int = 1000):
 
     # 4. META-LABELER TRAINING (Stage 2)
     logger.info("Starting Stage 2: Meta-Labeler (Sizing Model) Training...")
-    all_oos_scores, all_oos_labels, all_oos_indices = inc_trainer.get_aggregate_oos()
+    all_oos_scores, all_oos_probs, all_oos_labels, all_oos_indices = inc_trainer.get_aggregate_oos()
     
     if len(all_oos_indices) == 0:
         logger.warning("No OOS predictions found. Check training logs.")

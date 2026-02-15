@@ -159,6 +159,27 @@ By reducing the dimensions (55 -> 30), we have increased the **Signal-to-Noise R
 
 ---
 
-## 🏁 6. Success Metric: Structural Alpha
-We do not judge the system by the "Sharpe Ratio" (which penalizes upside volatility). We judge it by the **Tail Ratio**:
-> "Are our wins substantially larger than our losses, and can we survive the time between wins?"
+## 🛡️ 9. Gestión de Riesgos: Límites y "Cielos"
+
+Para evitar la sobre-exposición, el sistema aplica límites matemáticos estrictos:
+
+### A. El Límite de Concentración (10%)
+Aunque una empresa nos encante, el Orchestrator tiene prohibido que una sola posición supere el **10% del valor total de la cartera**. 
+*   Esto nos protege si un "Gema Estructural" falla por un evento impredecible (fraude, desastre natural).
+*   Si una empresa llega al 10%, dejamos de "engordarla" y el capital mensual se desvía a buscar nuevas semillas.
+
+### B. El Horizonte del Dividendo ("Boring Gold")
+Muchos de nuestros aciertos empiezan como empresas de crecimiento explosivo. Sin embargo, nuestro objetivo final es que algunas se conviertan en **"Vacas Lecheras"**:
+*   **Maduración**: Cuando una empresa como Enphase domina su mercado y deja de crecer al 100%, empieza a generar tanto flujo de caja que reparte dividendos.
+*   **La Meta**: Queremos que con los años, nuestra "Granja" esté llena de empresas compradas a 1€ que ahora nos pagan el equivalente a nuestro depósito mensual de 50€ solo en dividendos. Es la **Independencia Estructural**.
+
+---
+
+## 📚 Documentación Técnica Complementaria
+
+Para profundizar en la implementación de los arquetipos y la lógica probabilística, consulta los siguientes manuales:
+
+*   **[Arquetipos Estructurales](file:///c:/Users/Artur/mirror/whaletracker/docs/STRUCTURAL_ARCHETYPES.md)**: Catálogo de "especies" de gemas estructurales (Sovereign, IP-Monopoly, etc.).
+*   **[Lógica de Descubrimiento](file:///c:/Users/Artur/mirror/whaletracker/docs/STRUCTURAL_LOGIC.md)**: El motor de búsqueda no supervisado (Elbow Method) para encontrar nuevos arquetipos.
+*   **[Probabilidad y Convexidad](file:///c:/Users/Artur/mirror/whaletracker/docs/PROBABILITY_LOGIC.md)**: El sistema de calibración Kelly-Lite para decidir cuándo un "ticket de lotería" es rentable.
+*   **[Casos de Éxito de 10 Años](file:///c:/Users/Artur/mirror/whaletracker/docs/STRUCTURAL_WINNERS.md)**: Análisis forense de empresas como Enphase y Palantir antes de su explosión.

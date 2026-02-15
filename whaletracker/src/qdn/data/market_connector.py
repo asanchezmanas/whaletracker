@@ -86,19 +86,16 @@ class MarketConnector:
                 logger.error(f"Failed to fetch prices for {ticker}: {e}")
             return pd.DataFrame()
 
-    def get_company_info(self, ticker: str) -> Dict:
+    def get_company_info(self, ticker: str, as_of_date: Optional[str] = None) -> Dict:
         """
-        Fetch company fundamental data.
-        
-        Returns:
-            Dict with: sector, industry, market_cap, float_shares,
-            short_ratio, avg_volume, beta, etc.
+        Fetch company fundamental data. 
+        If 'as_of_date' is provided, attempts to estimate historical Market Cap.
         """
         try:
             stock = yf.Ticker(ticker)
             info = stock.info
 
-            return {
+            data = {
                 "ticker": ticker,
                 "name": info.get("longName") or info.get("shortName"),
                 "sector": info.get("sector"),
@@ -118,6 +115,16 @@ class MarketConnector:
                 "fifty_two_week_low": info.get("fiftyTwoWeekLow"),
                 "exchange": info.get("exchange"),
             }
+
+            # Estimate Historical Market Cap if date provided
+            if as_of_date and data.get("shares_outstanding"):
+                hist_price = self.get_stock_prices(ticker, as_of_date, (pd.to_datetime(as_of_date) + timedelta(days=5)).strftime("%Y-%m-%d"))
+                if not hist_price.empty:
+                    p = hist_price["Close"].iloc[0]
+                    data["market_cap_historical"] = p * data["shares_outstanding"]
+                    data["market_cap"] = data["market_cap_historical"] # Override for point-in-time brain
+
+            return data
         except Exception as e:
             logger.error(f"Failed to fetch info for {ticker}: {e}")
             return {"ticker": ticker}

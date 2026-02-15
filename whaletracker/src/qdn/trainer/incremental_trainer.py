@@ -82,6 +82,8 @@ class IncrementalTrainer:
             X_test = torch.tensor(test_features, dtype=torch.float32).to(trainer.device)
             output = trainer.model(X_test)
             scores = output["convexity_score"].squeeze(-1).cpu().numpy()
+            # Extract tail_probability from the decomposition
+            probs = output["decomposition"]["tail_probability"].squeeze(-1).cpu().numpy()
 
         # Save model for this fold
         fold_model_path = os.path.join(self.checkpoint_dir, f"model_fold_{fold_id}.pth")
@@ -89,11 +91,12 @@ class IncrementalTrainer:
 
         # Update state
         self.state["completed_folds"].append(fold_id)
-        # We store scores as lists for JSON serialization
+        # We store scores and probabilities as lists
         fold_results = {
             "fold_id": fold_id,
             "test_indices": test_indices.tolist(),
             "scores": scores.tolist(),
+            "probabilities": probs.tolist(), 
             "labels": test_labels.tolist(),
             "metrics": {
                 "sortino": float(result.sortino),
@@ -105,16 +108,18 @@ class IncrementalTrainer:
 
         return {"status": "completed", "scores": scores, "metrics": result}
 
-    def get_aggregate_oos(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def get_aggregate_oos(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Aggregate all OOS predictions and their original indices.
-        Returns: (scores, labels, indices)
+        Returns: (scores, probabilities, labels, indices)
         """
         all_scores = []
+        all_probs = []
         all_labels = []
         all_indices = []
         for fold in self.state["oos_predictions"]:
             all_scores.extend(fold["scores"])
+            all_probs.extend(fold.get("probabilities", [0.0] * len(fold["scores"])))
             all_labels.extend(fold["labels"])
             all_indices.extend(fold.get("test_indices", []))
-        return np.array(all_scores), np.array(all_labels), np.array(all_indices)
+        return np.array(all_scores), np.array(all_probs), np.array(all_labels), np.array(all_indices)

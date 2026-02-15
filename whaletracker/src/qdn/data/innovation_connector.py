@@ -81,18 +81,16 @@ class InnovationConnector:
             logger.warning(f"Patent lookup failed for {ticker}: {e}")
             return {"patent_count": 0, "velocity": 0.0}
 
-    def get_grant_intensity(self, ticker: str, years_back: int = 5) -> Dict[str, Any]:
+    def get_grant_intensity(self, ticker: str, reference_date: Optional[str] = None, years_back: int = 5) -> Dict[str, Any]:
         """
         Fetches SBIR/STTR grants.
-        Grants are 'State-Validated Seeds'.
+        If reference_date is provided, only looks at awards BEFORE that date.
         """
         company_name = self.resolve_company_name(ticker)
-        
-        # SBIR.gov API often fluctuates between endpoints. 
-        # Using the most robust keyword-based search.
         SBIR_SEARCH_URL = "https://www.sbir.gov/api/awards.json"
         
-        cutoff_year = datetime.now().year - years_back
+        ref_dt = pd.to_datetime(reference_date) if reference_date else datetime.now()
+        cutoff_year = ref_dt.year - years_back
         params = {"keyword": company_name}
 
         try:
@@ -112,12 +110,12 @@ class InnovationConnector:
             
             for award in data:
                 try:
-                    # The JSON format from sbir.gov/api/awards.json often uses 'award_year'
                     award_year = int(award.get("award_year", 0))
                 except:
                     award_year = cutoff_year + 1
                 
-                if award_year >= cutoff_year:
+                # Check if award fits in our historical window [cutoff, ref_dt]
+                if award_year >= cutoff_year and award_year <= ref_dt.year:
                     val = float(award.get("award_amount", 0))
                     total_value += val
                     grant_count += 1
