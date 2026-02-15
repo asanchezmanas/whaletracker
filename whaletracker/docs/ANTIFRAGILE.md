@@ -15,21 +15,37 @@ Not all 800% wins are fast "pump" events. The most robust "explosions" are **Str
 
 ---
 
-## 🧠 Decision Engine: Hierarchical DQN (H-DQN)
-The system handles both "Clinical" moonshots and "Structural" gems.
+## 🧠 Optimized Multi-Brain Architecture (H-DQN)
+Instead of arbitrary sectors, we split the "Expert Brains" by **Information Geometry**—grouping them by how the underlying data patterns behave.
 
-### 1. Alpha-Experts (Specialized Agents)
-*   **Defense/Infra Expert**: Focused on USASpending and multi-year Gov Contracts.
-*   **Biotech Expert (Explosive)**: Focused on Clinical Trial Phase Progression and FDA news.
-*   **Compounding/Gem Expert**: Specifically tracks **Supply Chain Dominance** and "Corporate King-Making".
-    *   *State*: [Customer Concentration (High-Quality), Backlog Delta, R&D Efficiency].
-    *   *Signal*: When a giant like Toyota appears in the supply chain data of a $50M company, the agent flags a "Structural Gem".
+### 1. The Sovereign Brain (The "State Floor")
+Specializes in the logic of **Government Spending and Policy**.
+*   **Domain**: Defense, Infrastructure, Energy, Healthcare (Grants).
+*   **Data Logic**: USASpending, Contract Backlogs, Public Policy/Senate committee overlap.
+*   **Pattern**: "Resistance to Ruin". High duration contracts that provide a structural floor.
 
-### 2. Whale Orchestrator (The Master Agent)
-*   Coordinates the specialized experts.
-*   **Reward (r)**: Dual-Mode Optimization.
-    *   *Moonshot Reward*: High reward for 800%+ events.
-    *   *Stability Reward*: Moderate but consistent reward for "low-drawdown, steady-growth" structural patterns.
+### 2. The IP-Monopoly Brain (The "Knowledge Moat")
+Specializes in the logic of **Intellectual Property and R&D**.
+*   **Domain**: Biotech, DeepTech, Semiconductors, Specialized Chemicals.
+*   **Data Logic**: Patent velocity, R&D/Burn efficiency, Clinical trial progression, GitHub/Dev interest.
+*   **Pattern**: "Exponential Scaling". Huge upside when an R&D breakthrough becomes a market standard.
+
+### 3. The Network-Force Brain (The "Smart Money Grid")
+Specializes in the logic of **Smart Money Convergence**.
+*   **Domain**: OTC, Micro-caps, Emerging Tech (Pre-IPO/IPO).
+*   **Data Logic**: Universal Whale Spectrum (Form 4, Section 16), Corporate King-Makers (M&A), Angle/VC entries.
+*   **Pattern**: "Structural Gems". Value explosion triggered by the entry of influential partners or acquisitions.
+
+### 4. The Fragility Filter (The Filter Brain)
+The mandatory **"Via Negativa"** layer.
+*   **Logic**: Before any expert scores a buy, this brain must confirm the company is NOT fragile.
+*   **Checks**: Cash runway > 12 months, manageable debt, non-zero revenue (or extreme grant funding).
+
+### 5. The Orchestrator (The Capital Allocator)
+The Master Brain that:
+*   **Filters**: Applies "Via Negativa" to eliminate fragile candidates.
+*   **Allocates**: Balances the "Barbell" (Compounding vs. Speculative) based on the signals received from the Sector and Functional experts.
+*   **Learns**: The Orchestrator's reward is the **Total Portfolio Convexity**. It learns over time which Expert Brain is most reliable in different macro-environments.
 
 ---
 
