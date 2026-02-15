@@ -22,6 +22,7 @@ from typing import Dict, Optional, List
 from .data.sec_connector import SECConnector
 from .data.senate_connector import SenateConnector
 from .data.market_connector import MarketConnector
+from .data.whale_connector import WhaleConnector
 from .features.engineer import FeatureEngineer
 from .labeling.triple_barrier import TripleBarrierLabeler
 
@@ -45,12 +46,17 @@ class QDNPipeline:
         self.sec = SECConnector(user_agent=sec_user_agent)
         self.senate = SenateConnector(include_house=True)
         self.market = MarketConnector(fred_api_key=fred_api_key)
+        self.whale = WhaleConnector(user_agent=sec_user_agent)
         self.engineer = FeatureEngineer()
 
     def fetch_all_transactions(
         self,
-        sec_days_back: int = 365,
+        sec_days_back: int = 30,
         include_senate: bool = True,
+        include_whale: bool = True,
+        include_clusters: bool = True,
+        include_13f: bool = False,
+        include_otc: bool = True,
     ) -> pd.DataFrame:
         """
         Fetch and merge transactions from all sources.
@@ -62,14 +68,22 @@ class QDNPipeline:
         """
         frames = []
 
-        # SEC Form 4
+        # 1. SEC Form 4 (Standard Insider Filings)
         logger.info("Fetching SEC Form 4 filings...")
         sec_df = self.sec.fetch_recent_filings(days_back=sec_days_back)
         if not sec_df.empty:
             frames.append(sec_df)
             logger.info(f"SEC: {len(sec_df)} transactions")
 
-        # Congressional trades
+        # 2. OpenInsider (Curated Whale Purchases)
+        if include_whale:
+            logger.info("Fetching curated whale purchases from OpenInsider...")
+            whale_purchases = self.whale.fetch_insider_purchases(days_back=sec_days_back)
+            if not whale_purchases.empty:
+                frames.append(whale_purchases)
+                logger.info(f"OpenInsider: {len(whale_purchases)} whale purchases")
+
+        # 3. Congressional trades
         if include_senate:
             logger.info("Fetching congressional trading data...")
             senate_df = self.senate.fetch_all_transactions()
@@ -77,13 +91,58 @@ class QDNPipeline:
                 frames.append(senate_df)
                 logger.info(f"Congress: {len(senate_df)} transactions")
 
+        # 3. Whale Signals (13D/G - activists & strategic)
+        if include_whale:
+            logger.info("Fetching SC 13D activist filings...")
+            whale_df = self.whale.fetch_13d_filings(days_back=sec_days_back)
+            if not whale_df.empty:
+                frames.append(whale_df)
+                logger.info(f"Whale (13D): {len(whale_df)} transactions")
+
+        # 4. Cluster Buys (Multiple insiders)
+        if include_clusters:
+            logger.info("Fetching Cluster Buys...")
+            cluster_df = self.whale.fetch_cluster_buys()
+            if not cluster_df.empty:
+                frames.append(cluster_df)
+                logger.info(f"Clusters: {len(cluster_df)} transactions")
+
+        # 5. OTC/Penny Stocks
+        if include_otc:
+            logger.info("Fetching OTC/Penny stock signals...")
+            otc_df = self.whale.fetch_otc_penny_signals(days_back=sec_days_back)
+            if not otc_df.empty:
+                frames.append(otc_df)
+                logger.info(f"OTC: {len(otc_df)} transactions")
+
+        # 6. Institutional 13F (Super-investors - optional buy/confirm)
+        if include_13f:
+            logger.info("Fetching Super Investor 13F signals...")
+            institutional_df = self.whale.fetch_all_super_investor_signals()
+            if not institutional_df.empty:
+                frames.append(institutional_df)
+                logger.info(f"13F: {len(institutional_df)} transactions")
+
         if not frames:
             logger.error("No data fetched from any source")
             return pd.DataFrame()
 
         # Unify
         combined = pd.concat(frames, ignore_index=True)
-        combined = combined.sort_values("transaction_date").reset_index(drop=True)
+        
+        # Defensive column checks
+        if "transaction_date" not in combined.columns:
+            combined["transaction_date"] = combined.get("filing_date")
+        else:
+            combined["transaction_date"] = combined["transaction_date"].fillna(combined["filing_date"])
+            
+        if "ticker" not in combined.columns:
+            combined["ticker"] = None
+            
+        if "transaction_code" not in combined.columns:
+            combined["transaction_code"] = "P" # Default to Purchase
+
+        combined = combined.sort_values("transaction_date", ascending=False).reset_index(drop=True)
 
         logger.info(f"Total transactions: {len(combined)}")
         return combined

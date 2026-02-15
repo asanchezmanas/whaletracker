@@ -242,11 +242,19 @@ class WhaleConnector:
 
                 for hit in hits:
                     source = hit.get("_source", {})
+                    # Try to get ticker from source metadata
+                    ticker = source.get("tickers")
+                    if isinstance(ticker, list) and ticker:
+                        ticker = ticker[0]
+                    elif isinstance(ticker, str):
+                        ticker = ticker.split(",")[0]
+                        
                     all_filings.append({
                         "filing_url": source.get("file_url", ""),
                         "filing_date": source.get("file_date", ""),
                         "filer_name": source.get("display_names", [""])[0] if source.get("display_names") else "",
                         "form_type": source.get("form_type", "SC 13D"),
+                        "ticker": ticker,
                     })
 
                 start += page_size
@@ -262,8 +270,10 @@ class WhaleConnector:
         df = pd.DataFrame(all_filings)
         df["filing_date"] = pd.to_datetime(df["filing_date"], errors="coerce")
 
-        # Try to extract ticker from filing URLs
-        df["ticker"] = df["filing_url"].apply(self._extract_ticker_from_url)
+        # Fallback to URL extraction if ticker still missing
+        missing_mask = df["ticker"].isna()
+        if missing_mask.any():
+            df.loc[missing_mask, "ticker"] = df.loc[missing_mask, "filing_url"].apply(self._extract_ticker_from_url)
 
         # Mark whale type
         df["whale_type"] = "activist_13d"
@@ -512,9 +522,18 @@ class WhaleConnector:
         return df.dropna(subset=["ticker"])
 
     def _extract_ticker_from_url(self, url: str) -> Optional[str]:
-        """Try to extract ticker symbol from SEC filing URL."""
-        # Most 13D URLs don't contain the ticker directly
-        # Would need to fetch the filing — return None for now
+        """Try to extract ticker symbol from SEC filing URL or path."""
+        if not url:
+            return None
+            
+        # 1. Look for explicit ticker pattern in filing doc name
+        # e.g., .../filename-AAPL-13D.xml
+        match = re.search(r"[-_]([A-Z]{1,5})[-_]", url.upper())
+        if match:
+            return match.group(1)
+            
+        # 2. Many activist filings have the ticker in the text but not the URL
+        # For this verification, we prioritize signals where ticker is identifiable
         return None
 
     def fetch_otc_penny_signals(self, days_back: int = 30) -> pd.DataFrame:
