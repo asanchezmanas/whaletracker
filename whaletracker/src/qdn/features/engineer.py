@@ -120,7 +120,7 @@ class FeatureEngineer:
     def __init__(self):
         self.fd = FractionalDifferencer()
         self.ms = MicrostructureAnalyzer()
-        from .data.alternative_data import AlternativeDataConnector
+        from ..data.alternative_data import AlternativeDataConnector
         self.alt = AlternativeDataConnector()
         self.feature_names = FEATURE_NAMES
         self.n_features = len(FEATURE_NAMES)
@@ -142,11 +142,13 @@ class FeatureEngineer:
         ticker = transaction.get("ticker", "")
         insider = transaction.get("insider_name", "")
 
-        # --- Insider features (5) ---
-        insider_hist = historical_transactions[
-            (historical_transactions["insider_name"] == insider)
-            & (historical_transactions["transaction_date"] < tx_date)
-        ]
+        if not historical_transactions.empty and "insider_name" in historical_transactions.columns:
+            insider_hist = historical_transactions[
+                (historical_transactions["insider_name"] == insider)
+                & (historical_transactions["transaction_date"] < tx_date)
+            ]
+        else:
+            insider_hist = pd.DataFrame()
 
         features[0] = self._insider_win_rate(insider_hist)
         features[1] = self._insider_frequency(insider_hist, tx_date)
@@ -425,8 +427,11 @@ class FeatureEngineer:
         if not value:
             return 0.0
 
+        if history.empty or "ticker" not in history.columns or "value" not in history.columns:
+            return 0.0
+
         ticker_hist = history[history["ticker"] == ticker]
-        if ticker_hist.empty or "value" not in ticker_hist.columns:
+        if ticker_hist.empty:
             return 0.0
 
         hist_values = ticker_hist["value"].dropna()
@@ -612,7 +617,7 @@ class FeatureEngineer:
             temporal_density: how concentrated the buys are in time
             quality: cluster quality score (buyer diversity × size)
         """
-        if history.empty:
+        if history.empty or "ticker" not in history.columns:
             return {"num_buyers": 0, "temporal_density": 0, "quality": 0}
 
         # 30-day window before transaction
