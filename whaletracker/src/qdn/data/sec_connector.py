@@ -17,6 +17,7 @@ import logging
 import time
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
+from ..utils.rate_limiter import RateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +45,7 @@ class SECConnector:
             "User-Agent": user_agent,
             "Accept-Encoding": "gzip, deflate",
         }
-        self._last_request_time = 0.0
+        self._sec_limiter = RateLimiter.get_limiter("sec", 10.0)
         self._client = None  # Lazy-initialized persistent client
 
     def _get_client(self) -> httpx.Client:
@@ -58,11 +59,8 @@ class SECConnector:
         return self._client
 
     def _rate_limit(self):
-        """Enforce SEC's 10 req/sec rate limit."""
-        elapsed = time.time() - self._last_request_time
-        if elapsed < 0.1:
-            time.sleep(0.1 - elapsed)
-        self._last_request_time = time.time()
+        """Enforce SEC's 10 req/sec rate limit (Shared)."""
+        self._sec_limiter.wait()
 
     def fetch_recent_filings(
         self,

@@ -31,6 +31,7 @@ import logging
 from typing import Dict, Optional, Tuple, List
 from dataclasses import dataclass
 from datetime import timedelta
+from ..utils.timezone_utils import unify_timezone
 
 logger = logging.getLogger(__name__)
 
@@ -119,8 +120,7 @@ class TripleBarrierLabeler:
         close = prices[close_col]
 
         # Filter to before entry date
-        if hasattr(close.index, "tz"):
-            entry_date = entry_date.tz_localize(close.index.tz) if entry_date.tz is None else entry_date
+        entry_date = unify_timezone(entry_date, close.index)
         mask = close.index <= entry_date
         pre_entry = close[mask].tail(self.vol_lookback)
 
@@ -154,8 +154,7 @@ class TripleBarrierLabeler:
         close = prices[close_col]
 
         # Get entry price (first available on or after entry_date)
-        if hasattr(close.index, "tz") and entry_date.tz is None:
-            entry_date = entry_date.tz_localize(close.index.tz)
+        entry_date = unify_timezone(entry_date, close.index)
 
         future = close[close.index >= entry_date]
         if len(future) < 5:
@@ -306,32 +305,55 @@ class TripleBarrierLabeler:
             )
 
         return labels_arr, returns_arr, events
+        return weights
 
     def get_concurrent_labels(
         self, events: List[BarrierEvent]
     ) -> np.ndarray:
         """
-        Compute concurrent label count for each event.
+        Compute concurrent label count for each event using an O(n log n) sweep-line.
 
         Used for sample weight calculation — events that overlap
         temporally share information and should be down-weighted.
-
-        Returns:
-            np.ndarray of shape (n_events,) — concurrent counts
         """
-        n = len(events)
-        concurrency = np.ones(n, dtype=np.float32)
+        if not events:
+            return np.array([], dtype=np.float32)
 
-        for i in range(n):
-            for j in range(i + 1, n):
-                # Check temporal overlap
-                overlap = (
-                    events[i].entry_date <= events[j].exit_date
-                    and events[j].entry_date <= events[i].exit_date
-                )
-                if overlap:
-                    concurrency[i] += 1
-                    concurrency[j] += 1
+        # 1. Create event list: (time, type, index)
+        # type: +1 for start (entry), -1 for end (exit)
+        times = []
+        for i, ev in enumerate(events):
+            times.append((ev.entry_date, 1, i))
+            times.append((ev.exit_date, -1, i))
+
+        # 2. Sort by time
+        times.sort()
+
+        # 3. Sweep line to find max concurrency for each interval
+        n = len(events)
+        concurrency = np.zeros(n, dtype=np.float32)
+        active_indices = set()
+        
+        # Store the concurrency level at which each event became active
+        # This is needed because an event's concurrency might increase later
+        # but we need to track the *maximum* concurrency it experienced.
+        event_concurrency_at_start = {} 
+
+        for t, type, idx in times:
+            if type == 1: # Event starts
+                active_indices.add(idx)
+                current_active_count = len(active_indices)
+                event_concurrency_at_start[idx] = current_active_count
+                
+                # Update the concurrency for all currently active events
+                # with the new, potentially higher, concurrency level.
+                for active_idx in active_indices:
+                    concurrency[active_idx] = max(concurrency[active_idx], current_active_count)
+            else: # Event ends
+                # When an event ends, it contributes to the concurrency of other active events
+                # up until its exit. Its own concurrency is determined by the max it experienced.
+                if idx in active_indices: # Ensure it was active (could be already removed if exit_date == entry_date)
+                    active_indices.remove(idx)
 
         return concurrency
 

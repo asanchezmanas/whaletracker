@@ -28,19 +28,40 @@ class MicrostructureAnalyzer:
         H = 0.5: Random walk
         H > 0.5: Persistent (trending)
         """
-        if len(series) < max_lag * 2:
+        if len(series) < 50:
             return 0.5
 
-        lags = range(2, max_lag)
-        # Rescaled Range (R/S) 
-        tau = [np.sqrt(np.std(np.subtract(series[lag:], series[:-lag]))) for lag in lags]
-        
-        # log(R/S) = H * log(tau)
-        poly = np.polyfit(np.log(lags), np.log(tau), 1)
-        
-        # Hurst is the slope (with some scaling adjustment for standard R/S)
-        # Simplified version for features
-        return float(poly[0] * 2.0)
+        # Standard R/S Analysis
+        lags = range(10, min(len(series) // 2, 500))
+        rs_list = []
+        for lag in lags:
+            # Rescale the series into chunks of size 'lag'
+            n_chunks = len(series) // lag
+            if n_chunks == 0: continue
+            
+            chunk_rs = []
+            for i in range(n_chunks):
+                chunk = series[i*lag : (i+1)*lag]
+                if len(chunk) < 2: continue
+                # Real R/S logic: Range of cumulative deviations / Std
+                m = np.mean(chunk)
+                z = np.cumsum(chunk - m)
+                r = np.max(z) - np.min(z)
+                s = np.std(chunk, ddof=1)
+                if s > 1e-12:
+                    chunk_rs.append(r / s)
+            
+            if chunk_rs:
+                rs_list.append(np.mean(chunk_rs))
+            else:
+                lags = [l for l in lags if l != lag] # adjust lags if no valid chunks
+
+        if len(rs_list) < 5:
+            return 0.5
+
+        # log(R/S) = H * log(n) + c
+        poly = np.polyfit(np.log(lags[:len(rs_list)]), np.log(rs_list), 1)
+        return float(np.clip(poly[0], 0.0, 1.0))
 
     @staticmethod
     def compute_vpin(

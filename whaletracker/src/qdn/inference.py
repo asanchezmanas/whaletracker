@@ -340,9 +340,9 @@ class QDNInference:
 
     def _classify_score(self, score: float) -> tuple:
         """Classify model score into action and conviction."""
-        if score >= 70:
+        if score >= self.config.backtest.strong_buy_threshold:
             return "BUY", "HIGH"
-        elif score >= 50:
+        elif score >= self.config.backtest.buy_score_threshold:
             return "BUY", "MEDIUM"
         elif score >= 35:
             return "WATCH", "LOW"
@@ -371,6 +371,10 @@ class QDNInference:
             "logged_at": datetime.now().isoformat(),
         }
         self._signals.append(entry)
+        
+        # Prevent memory leak: keep only latest 1000 signals in RAM
+        if len(self._signals) > 1000:
+            self._signals = self._signals[-1000:]
 
         # Auto-save every 10 signals
         if len(self._signals) % 10 == 0:

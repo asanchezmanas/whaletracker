@@ -135,7 +135,8 @@ def compute_max_drawdown(returns: np.ndarray) -> float:
         return 0.0
 
     # Log-space to prevent overflow with many large returns
-    log_returns = np.log1p(np.clip(returns, -0.99, None))
+    # Use a small epsilon to handle -1.0 (total loss) without -inf
+    log_returns = np.log(np.clip(1 + returns, 1e-7, None))
     cumulative_log = np.cumsum(log_returns)
     running_max_log = np.maximum.accumulate(cumulative_log)
     
@@ -143,7 +144,7 @@ def compute_max_drawdown(returns: np.ndarray) -> float:
     dd_log = cumulative_log - running_max_log  # Always <= 0
     max_dd_log = np.min(dd_log)
     
-    return float(np.expm1(max_dd_log))  # Convert back from log space
+    return float(np.exp(max_dd_log) - 1.0)  # Convert back from log space
 
 
 def compute_calmar(

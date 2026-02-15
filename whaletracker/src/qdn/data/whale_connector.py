@@ -24,6 +24,7 @@ import logging
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 from io import StringIO
+from ..utils.rate_limiter import RateLimiter
 from xml.etree import ElementTree as ET
 
 logger = logging.getLogger(__name__)
@@ -81,14 +82,11 @@ class WhaleConnector:
             },
             follow_redirects=True,
         )
-        self._last_sec_request = 0.0
+        self._sec_limiter = RateLimiter.get_limiter("sec", 10.0)
 
     def _sec_rate_limit(self):
-        """SEC rate limit: 10 req/sec."""
-        elapsed = time.time() - self._last_sec_request
-        if elapsed < 0.12:
-            time.sleep(0.12 - elapsed)
-        self._last_sec_request = time.time()
+        """SEC rate limit: 10 req/sec (Global)."""
+        self._sec_limiter.wait()
 
     # ═══════════════════════════════════════════════════════
     # FORM 4: Insider Purchases (Entry Signal)

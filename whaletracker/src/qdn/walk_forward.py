@@ -289,7 +289,8 @@ class PortfolioBacktester:
         unique_dates = np.unique(dates)
         
         for dt in unique_dates:
-            day_mask = (dates == dt)
+            # Use pd.to_datetime to ensure consistent comparison (avoids timestamp vs date issues)
+            day_mask = (pd.to_datetime(dates).date == pd.to_datetime(dt).date())
             day_features = features[day_mask]
             day_tickers = np.array(tickers)[day_mask]
             day_scores = primary_scores[day_mask]
