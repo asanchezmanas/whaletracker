@@ -80,7 +80,10 @@ class MarketConnector:
             
             return data
         except Exception as e:
-            logger.error(f"Failed to fetch prices for {ticker}: {e}")
+            if "Not Found" in str(e) or "404" in str(e):
+                logger.warning(f"Ticker {ticker} not found on Yahoo Finance (expected for some de-listed/OTC).")
+            else:
+                logger.error(f"Failed to fetch prices for {ticker}: {e}")
             return pd.DataFrame()
 
     def get_company_info(self, ticker: str) -> Dict:

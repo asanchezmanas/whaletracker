@@ -19,7 +19,7 @@ from datetime import datetime
 
 from whaletracker.src.qdn.pipeline import QDNPipeline
 from whaletracker.src.qdn.config import QDNConfig
-from whaletracker.src.qdn.walk_forward import PurgedKFoldCV
+from whaletracker.src.qdn.walk_forward import PurgedKFoldCV, PortfolioBacktester
 from whaletracker.src.qdn.trainer.incremental_trainer import IncrementalTrainer
 from whaletracker.src.qdn.labeling.meta_labeling import MetaModelManager
 
@@ -34,9 +34,7 @@ def run_production_training(days_back: int = 1000):
     pipeline = QDNPipeline()
     
     # 1. DATA ACQUISITION
-    logger.info("Fetching all transaction sources (incremental backfill)...")
-    # Using 90 days increments or similar logic inside the pipeline if needed
-    # For PoC, we assume the pipeline handles the full fetch
+    logger.info("Fetching all transaction sources...")
     transactions = pipeline.fetch_all_transactions(
         sec_days_back=days_back,
         include_senate=True,
@@ -48,6 +46,7 @@ def run_production_training(days_back: int = 1000):
     if transactions.empty:
         logger.error("No transactions fetched. Aborting.")
         return
+    logger.info(f"Total Transactions Fetched: {len(transactions)}")
 
     # 2. FEATURE ENGINEERING
     logger.info("Computing features and labels (Real Market Feed)...")
@@ -65,20 +64,15 @@ def run_production_training(days_back: int = 1000):
     sample_weights = data["sample_weights"]
     metadata = data["metadata"]
     
-    # Traceability fields
-    filing_dates = metadata["filing_date"].values if "filing_date" in metadata.columns else None
-    whale_types = metadata["whale_type"].values if "whale_type" in metadata.columns else None
-    prices = metadata["price"].values if "price" in metadata.columns else np.zeros(len(features))
+    logger.info(f"Samples surviving feature/label engineering: {len(features)}")
     
-    if len(features) < 20:
-        logger.error(f"Insufficient data for PoC training ({len(features)} samples).")
+    if len(features) < 10:
+        logger.error(f"Insufficient data for training ({len(features)} samples).")
         return
 
     # 3. INCREMENTAL PRIMARY TRAINING
     logger.info("Starting Primary QDN Training (Fold-by-Fold Checkpoints)...")
     inc_trainer = IncrementalTrainer(config)
-    
-    # We use a smaller CV for PoC if needed, but keeping PurgedKFold is better
     cv = PurgedKFoldCV(n_folds=config.training.cv_folds, embargo_pct=config.training.embargo_pct)
     
     for fold in cv.split(dates, dates, event_ends):
@@ -86,6 +80,7 @@ def run_production_training(days_back: int = 1000):
             fold.fold_id,
             features[fold.train_indices], labels[fold.train_indices],
             features[fold.test_indices], labels[fold.test_indices],
+            test_indices=fold.test_indices,
             sample_weights=sample_weights[fold.train_indices]
         )
 
@@ -95,40 +90,45 @@ def run_production_training(days_back: int = 1000):
     
     if len(all_oos_indices) == 0:
         logger.warning("No OOS predictions found. Check training logs.")
-    else:
-        # Align OOS features and weights
-        oos_features = features[all_oos_indices]
-        oos_weights = sample_weights[all_oos_indices]
-        
-        # Binary Meta-labels: 1 if return > 0 (profitable), else 0
-        meta_labels = (all_oos_labels > 0).astype(np.float32)
-        
-        meta_manager = MetaModelManager(input_dim=features.shape[1] + 1)
-        meta_manager.train(
-            oos_features,
-            all_oos_scores,
-            meta_labels,
-            sample_weights=oos_weights,
-            epochs=20
-        )
-        meta_manager.save(os.path.join(inc_trainer.checkpoint_dir, "meta_labeler.pth"))
+        return
+
+    # Align OOS features and weights
+    oos_features = features[all_oos_indices]
+    oos_weights = sample_weights[all_oos_indices]
+    
+    # Binary Meta-labels: 1 if return > 0 (profitable), else 0
+    meta_labels = (all_oos_labels > 0).astype(np.float32)
+    
+    meta_manager = MetaModelManager(input_dim=features.shape[1] + 1)
+    meta_manager.train(
+        oos_features,
+        all_oos_scores,
+        meta_labels,
+        sample_weights=oos_weights,
+        epochs=30
+    )
+    meta_manager.save(os.path.join(inc_trainer.checkpoint_dir, "meta_labeler.pth"))
     
     # 5. FINAL P&L AUDIT & TRACEABILITY
-    logger.info("Generating Final PoC Performance Report...")
-    from whaletracker.src.qdn.walk_forward import PortfolioBacktester
+    logger.info("Generating Final Performance Report...")
+    
+    # Traceability fields - slice metadata based on OOS indices
+    sub_meta = metadata.iloc[all_oos_indices]
+    filing_dates_oos = sub_meta["filing_date"].values if "filing_date" in sub_meta.columns else None
+    whale_types_oos = sub_meta["whale_type"].values if "whale_type" in sub_meta.columns else None
+    prices_oos = sub_meta["price"].values if "price" in sub_meta.columns else np.zeros(len(oos_features))
     
     backtester = PortfolioBacktester(config)
-    # Re-run simulation on OOS set (to see "live-like" performance)
     results = backtester.run(
-        features=features[all_oos_indices],
+        features=oos_features,
         dates=dates[all_oos_indices],
         tickers=np.array(tickers)[all_oos_indices].tolist(),
-        prices=prices[all_oos_indices],
+        prices=prices_oos,
         primary_scores=all_oos_scores,
         actual_returns=all_oos_labels,
-        daily_volumes=None, # Simplified for PoC
-        filing_dates=filing_dates[all_oos_indices],
-        whale_types=whale_types[all_oos_indices]
+        daily_volumes=None,
+        filing_dates=filing_dates_oos,
+        whale_types=whale_types_oos
     )
     
     print("\n" + "="*60)
@@ -136,15 +136,9 @@ def run_production_training(days_back: int = 1000):
     print("="*60)
     print(backtester.report())
     
-    # Save Trade Log CSV for external audit
     audit_file = os.path.join(inc_trainer.checkpoint_dir, "audit_log.csv")
     results["trades"].to_csv(audit_file, index=False)
     logger.info(f"Audit Log saved to {audit_file}")
-    
-    if results["total_return"] > 0:
-        logger.info("\nSUCCESS: Strategy demonstrated positive alpha on real-world Smart Money data.")
-    else:
-        logger.warning("\nCAUTION: Strategy yielded suboptimal returns. Refine scoring/thresholds.")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -153,7 +147,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
     
     if args.poc:
-        logger.info("Running in PoC MODE (Short window, fast check)")
-        run_production_training(days_back=90)
+        logger.info("Running in PoC MODE (1 year backfill, fast check)")
+        run_production_training(days_back=365)
     else:
         run_production_training(args.days)

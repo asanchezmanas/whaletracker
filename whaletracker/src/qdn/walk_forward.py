@@ -391,12 +391,12 @@ class PortfolioBacktester:
         
         # Periodic Summary
         lines.append("\nPeriodic P&L Summary:")
-        periodic = self.get_periodic_report(freq="M")
+        periodic = self.get_periodic_report(freq="ME")
         lines.append(periodic.to_string())
         
         return "\n".join(lines)
 
-    def get_periodic_report(self, freq: str = "M") -> pd.DataFrame:
+    def get_periodic_report(self, freq: str = "ME") -> pd.DataFrame:
         """
         Generate periodic P&L and Balance summary (Monthly/Quarterly).
         """

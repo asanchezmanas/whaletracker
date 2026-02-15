@@ -50,6 +50,7 @@ class IncrementalTrainer:
         train_labels: np.ndarray,
         test_features: np.ndarray,
         test_labels: np.ndarray,
+        test_indices: np.ndarray,
         sample_weights: Optional[np.ndarray] = None
     ) -> Dict:
         """
@@ -62,6 +63,9 @@ class IncrementalTrainer:
 
         logger.info(f"Starting Fold {fold_id}...")
         
+        if train_features.shape[0] == 0:
+            logger.error(f"ABORTING: Train features for fold {fold_id} are empty!")
+            return {"status": "error", "message": "empty training set"}
         # Simple trainer instance for this fold
         trainer = QDNTrainer(self.config)
         
@@ -88,7 +92,7 @@ class IncrementalTrainer:
         # We store scores as lists for JSON serialization
         fold_results = {
             "fold_id": fold_id,
-            "test_indices": fold.test_indices.tolist() if hasattr(fold, 'test_indices') else [],
+            "test_indices": test_indices.tolist(),
             "scores": scores.tolist(),
             "labels": test_labels.tolist(),
             "metrics": {

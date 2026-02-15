@@ -134,21 +134,19 @@ class PurgedKFoldCV:
             test_period_start = dates[test_start_idx]
             test_period_end = dates[test_end_idx - 1]
 
-            # Train candidates: everything NOT in test
-            train_candidates = np.concatenate([
-                sort_idx[:test_start_idx],
-                sort_idx[test_end_idx:],
+            # Train candidates: positions in the sorted arrays
+            train_pos_candidates = np.concatenate([
+                np.arange(0, test_start_idx),
+                np.arange(test_end_idx, n_samples),
             ])
 
-            # --- PURGING ---
-            # Remove train samples whose event window overlaps test period
-            purged_mask = np.ones(len(train_candidates), dtype=bool)
+            purged_mask = np.ones(len(train_pos_candidates), dtype=bool)
 
-            for i, train_idx in enumerate(train_candidates):
-                ev_start = event_starts[np.searchsorted(sort_idx, train_idx)]
-                ev_end = event_ends[np.searchsorted(sort_idx, train_idx)]
+            for i, p_idx in enumerate(train_pos_candidates):
+                ev_start = event_starts[p_idx]
+                ev_end = event_ends[p_idx]
 
-                # Overlap check: event window overlaps test period
+                # Overlap check
                 overlaps = (
                     ev_start <= test_period_end
                     and ev_end >= test_period_start
@@ -157,9 +155,10 @@ class PurgedKFoldCV:
                     purged_mask[i] = False
 
             n_purged = (~purged_mask).sum()
-            train_after_purge = train_candidates[purged_mask]
-
-            # --- EMBARGO ---
+            final_train_pos = train_pos_candidates[purged_mask]
+            
+            # Convert back to original indices
+            train_after_purge = sort_idx[final_train_pos]
             # Remove samples right after test window
             embargo_start = test_end_idx
             embargo_end = min(test_end_idx + embargo_size, n_samples)
@@ -269,12 +268,14 @@ class CombinatorialPurgedCV(PurgedKFoldCV):
 
         # Create fold groups
         fold_size = n_samples // self.n_folds
+        fold_boundaries = [
+            (i * fold_size, min((i + 1) * fold_size, n_samples))
+            for i in range(self.n_folds)
+        ]
+        fold_boundaries[-1] = (fold_boundaries[-1][0], n_samples) # Last fold absorbs remainder
+
         groups = []
-        for i in range(self.n_folds):
-            start = i * fold_size
-            end = min((i + 1) * fold_size, n_samples)
-            if i == self.n_folds - 1:
-                end = n_samples
+        for start, end in fold_boundaries:
             groups.append(sort_idx[start:end])
 
         # All combinations of test groups
@@ -294,20 +295,18 @@ class CombinatorialPurgedCV(PurgedKFoldCV):
             test_period_start = test_dates.min()
             test_period_end = test_dates.max()
 
-            # Train candidates
-            train_group_ids = [
-                g for g in range(self.n_folds) if g not in test_group_ids
-            ]
-            train_candidates = np.concatenate(
-                [groups[g] for g in train_group_ids]
-            )
+            # Train candidates (positions)
+            train_pos_candidates = np.concatenate([
+                np.arange(id_range[0], id_range[1])
+                for g_id, id_range in enumerate(fold_boundaries)
+                if g_id not in test_group_ids
+            ])
 
             # Purge
-            purged_mask = np.ones(len(train_candidates), dtype=bool)
-            for i, train_idx in enumerate(train_candidates):
-                pos = np.searchsorted(sort_idx, train_idx)
-                ev_end = event_ends[pos]
-                ev_start = event_starts[pos]
+            purged_mask = np.ones(len(train_pos_candidates), dtype=bool)
+            for i, p_idx in enumerate(train_pos_candidates):
+                ev_start = event_starts[p_idx]
+                ev_end = event_ends[p_idx]
 
                 overlaps = (
                     ev_start <= test_period_end
@@ -317,14 +316,12 @@ class CombinatorialPurgedCV(PurgedKFoldCV):
                     purged_mask[i] = False
 
             n_purged = (~purged_mask).sum()
-            train_after_purge = train_candidates[purged_mask]
-
+            train_after_purge = sort_idx[train_pos_candidates[purged_mask]]
             # Embargo (after each test group block)
             embargo_indices = set()
             for g in test_group_ids:
-                group_end = groups[g][-1]
-                pos = np.searchsorted(sort_idx, group_end)
-                for j in range(pos + 1, min(pos + 1 + embargo_size, n_samples)):
+                group_end_pos = fold_boundaries[g][1] - 1 # Last position in the group
+                for j in range(group_end_pos + 1, min(group_end_pos + 1 + embargo_size, n_samples)):
                     embargo_indices.add(sort_idx[j])
 
             embargo_mask = np.array([

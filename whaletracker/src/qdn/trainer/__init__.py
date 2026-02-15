@@ -18,11 +18,11 @@ import json
 from datetime import datetime
 from typing import Dict, List, Tuple, Optional
 
-from .config import QDNConfig, TrainingConfig
-from .dense_network import DenseNetwork
-from .loss_functions import AntifragileLoss
-from .adversarial import AdversarialTrainer
-from .evaluation import evaluate_predictions, EvaluationResult
+from ..config import QDNConfig, TrainingConfig
+from ..dense_network import DenseNetwork
+from ..loss_functions import AntifragileLoss
+from ..adversarial import AdversarialTrainer
+from ..evaluation import evaluate_predictions, EvaluationResult
 
 
 class QDNTrainer:
