@@ -26,6 +26,7 @@ from typing import Optional, List, Dict
 from io import StringIO
 from ..utils.rate_limiter import RateLimiter
 from xml.etree import ElementTree as ET
+from urllib.parse import urlencode
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +198,91 @@ class WhaleConnector:
             logger.warning(f"Cluster buys error: {e}")
 
         return pd.DataFrame()
+
+    def get_cluster_quality(self, ticker: str, window_days: int = 60) -> float:
+        """
+        Scores the 'Diversity' and 'Seniority' of a whale cluster.
+        Diversity = (Insider + 5% Holder + Strategic Partner).
+        """
+        # Fetch recent insider purchases for this ticker
+        url = (
+            f"http://openinsider.com/screener?"
+            f"s={ticker}&o=&pl=&ph=&ll=&lh=&fd={window_days}"
+            f"&fdr=&td=0&tdr=&feession=&cession=&sidTL=&tidTL="
+            f"&tiession=&ession=&sicTL=&sicession=&pession="
+            f"&cnt=100&page=1"
+        )
+        
+        try:
+            r = self._openinsider_client.get(url)
+            if r.status_code != 200: return 0.0
+            tables = pd.read_html(StringIO(r.text))
+            df = pd.DataFrame()
+            for tbl in tables:
+                cols = [str(c).lower() for c in tbl.columns]
+                if any("trade" in c for c in cols):
+                    df = self._parse_openinsider(tbl, filter_purchases=True)
+                    break
+            
+            if df.empty: return 0.0
+            
+            # Diversity Score
+            unique_titles = df["insider_title"].str.lower().fillna("")
+            is_c_level = unique_titles.str.contains(r"ceo|cto|cfo|president|director", na=False).sum()
+            is_ten_pct = unique_titles.str.contains(r"10%|owner", na=False).sum()
+            
+            num_buyers = df["insider_name"].nunique()
+            
+            # Score components: 
+            # 0.4 for multi-buyer, 0.3 for C-level presence, 0.3 for 10% holder participation
+            score = min(num_buyers / 5.0, 1.0) * 0.4
+            score += 0.3 if is_c_level > 0 else 0.0
+            score += 0.3 if is_ten_pct > 0 else 0.0
+            
+            return float(score)
+        except Exception:
+            return 0.0
+
+    def is_corporate_king_maker(self, ticker: str) -> float:
+        """
+        Detects if a Global 500 partner or major strategic entity is involved.
+        This often appears as a 13D filing from a corporate parent.
+        """
+        # Placeholder for corporate name matching (e.g. Lockheed, Toyota as filers)
+        KING_MAKERS = ["TOYOTA", "LOCKHEED", "GOOGLE", "ALPHABET", "AMAZON", "MICROSOFT", "INTEL"]
+        
+        try:
+            # We check recent 13D/G filings for this ticker
+            df_13d = self.fetch_13d_filings(days_back=90)
+            if df_13d.empty: return 0.0
+            
+            ticker_filings = df_13d[df_13d["ticker"] == ticker]
+            if ticker_filings.empty: return 0.0
+            
+            # Check if any filer name matches a King Maker
+            for filer in ticker_filings["filer_name"].str.upper():
+                if any(km in filer for km in KING_MAKERS):
+                    return 1.0
+            return 0.0
+        except Exception:
+            return 0.0
+
+    def get_institutional_drift(self, ticker: str) -> float:
+        """
+        Scores the transition from zero institutional presence to 'Smart Money' entry.
+        Calculated as the count of known 'Super Investors' holding the ticker (13F).
+        """
+        # This is expensive to do ticker-by-ticker without a localized database.
+        # For the POC, we simulate the 'Drift' signal using a simplified heuristic.
+        # Logic: If recent 13D filings exist but price is low, drift is likely HIGH.
+        try:
+            df_13d = self.fetch_13d_filings(days_back=120)
+            if df_13d.empty: return 0.0
+            
+            count = len(df_13d[df_13d["ticker"] == ticker])
+            return float(min(count / 3.0, 1.0))
+        except Exception:
+            return 0.0
 
     # ═══════════════════════════════════════════════════════
     # SC 13D: Activist / Strategic Stakes (Entry Signal)

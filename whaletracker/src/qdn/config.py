@@ -14,7 +14,7 @@ class ModelConfig:
     """Dense Network architecture configuration."""
 
     # --- Feature dimensions ---
-    n_features: int = 40  # Unified 40-feature set (Phase 4)
+    n_features: int = 30  # Unified 30-feature set (Structural Brains)
     
     # --- Network architecture ---
     hidden_dims: List[int] = field(default_factory=lambda: [128, 64, 32])
@@ -76,26 +76,26 @@ class TrainingConfig:
 
 @dataclass
 class BacktestConfig:
-    """Backtesting configuration."""
+    """Backtesting configuration (Antifragile Micro-Lottery)."""
 
     initial_capital: float = 0.0  # Start with 0, add monthly
-    monthly_contribution: float = 150.0  # EUR
+    monthly_contribution: float = 50.0  # EUR (The "Fat_Inflow")
     commission_rate: float = 0.001  # 0.1%
     slippage_bps: float = 5  # 5 basis points
     
-    # --- Position sizing ---
-    max_positions: int = 3
-    kelly_fraction: float = 0.5  # Half-Kelly for safety
-    max_single_position_pct: float = 0.40  # Max 40% in one asset
+    # --- Position sizing (Micro-Lottery) ---
+    seed_size_range: tuple = (1.0, 5.0)  # EUR per "ticket"
+    max_positions: int = 500  # High limit to allow for "accumulation"
+    kelly_fraction: float = 0.0  # Kelly is irrelevant for 1€ seeds
     
     # --- Thresholds ---
-    buy_score_threshold: float = 70.0  # Score > 70 = actionable
-    strong_buy_threshold: float = 85.0
+    buy_score_threshold: float = 75.0  # Score > 75 = structural gem
+    fatten_threshold: float = 90.0     # Score > 90 = allocate more capital
     
     # --- Exit rules ---
-    stop_loss_pct: float = 0.15  # -15% hard stop
-    take_profit_pct: float = 1.0  # +100% take profit (let winners run)
-    max_holding_days: int = 365  # 1 year max hold
+    stop_loss_pct: float = 0.90  # Effectively no stop loss (willing to burn 1€)
+    take_profit_pct: float = 10.0 # +1000% take profit (capture the Black Swan)
+    max_holding_days: int = 1825 # 5 years (The Infinite Game)
 
 
 @dataclass
